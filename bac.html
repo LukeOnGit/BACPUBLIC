@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BAC Level Calculator</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      max-width: 700px;
+      margin: 2em auto;
+      padding: 1.5em;
+      background: #ffffff;
+      border-radius: 12px;
+      box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+      color: #333;
+    }
+    h1 {
+      text-align: center;
+      margin-bottom: 0.5em;
+    }
+    .input-group, .drinks-group, .result-group {
+      margin-bottom: 1.5em;
+    }
+    label {
+      font-weight: 600;
+      display: block;
+      margin-bottom: 0.3em;
+      color: #444;
+    }
+    input, select, button {
+      width: 100%;
+      padding: 0.6em;
+      font-size: 1em;
+      margin-bottom: 0.8em;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      box-sizing: border-box; /* NEW: Better box model handling */
+      transition: border-color 0.2s;
+    }
+    input:focus, select:focus {
+      border-color: #007BFF;
+      outline: none;
+    }
+    button {
+      background: #007BFF;
+      color: #fff;
+      border: none;
+      cursor: pointer;
+      font-weight: 600;
+    }
+    button:hover {
+      background: #0056b3;
+    }
+    #drinksList .drink-card {
+      background: #f9f9f9;
+      padding: 1em;
+      border-radius: 8px;
+      margin-bottom: 1em;
+      position: relative;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+    }
+    .removeBtn {
+      position: absolute;
+      top: 0.6em;
+      right: 0.6em;
+      background: #e74c3c;
+      color: #fff;
+      border: none;
+      border-radius: 50%;
+      width: 28px;
+      height: 28px;
+      font-size: 1.1em;
+      line-height: 1;
+      cursor: pointer;
+    }
+    .fields-row {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 0.8em;
+    }
+    /* NEW: Style for the clear button */
+    #clearBtn {
+        background-color: #f39c12;
+        margin-top: 0.5em;
+    }
+    #clearBtn:hover {
+        background-color: #e67e22;
+    }
+    .duration-fields, .daytime-fields {
+      display: none;
+    }
+    .result-group p {
+      font-size: 1.1em;
+      line-height: 1.4;
+    }
+    canvas {
+      margin-top: 1.5em;
+    }
+  </style>
+</head>
+<body>
+  <h1>BAC Level Calculator</h1>
+
+  <div class="input-group">
+    <label for="weight">Body Weight (lbs)</label>
+    <input type="number" id="weight" placeholder="e.g., 150" min="0" step="1">
+  </div>
+
+  <div class="input-group">
+    <label for="gender">Gender</label>
+    <select id="gender">
+      <option value="male">Male</option>
+      <option value="female">Female</option>
+    </select>
+  </div>
+
+  <div class="drinks-group">
+    <h2>Drinks Consumed</h2>
+    <div id="drinksList"></div>
+    <button id="addDrinkBtn">+ Add Another Drink</button>
+    <!-- NEW: Button to clear the session -->
+    <button id="clearBtn">Start New Session (Clear Drinks)</button>
+  </div>
+
+  <button id="calcBtn">Calculate BAC & Save</button> <!-- NEW: Updated text for clarity -->
+
+  <div class="result-group">
+    <p id="result"></p>
+    <p id="behavior"></p>
+    <p id="impairment"></p>
+  </div>
+
+  <canvas id="bacChart" width="600" height="150"></canvas>
+
+  <script>
+    // NEW: Define a constant for our localStorage key
+    const STORAGE_KEY = 'bacCalculatorData';
+
+    const bacInfo = [
+      { min: 0.001, max: 0.029, color: '#2ecc71', behavior: 'Average individual appears normal', impairment: 'Subtle effects detectable only by special tests' },
+      { min: 0.03, max: 0.059, color: '#27ae60', behavior: 'Mild euphoria, relaxation, talkativeness', impairment: 'Slight impairment in concentration' },
+      { min: 0.06, max: 0.099, color: '#f1c40f', behavior: 'Blunted feelings, euphoria, extraversion', impairment: 'Impaired reasoning, depth perception, peripheral vision' },
+      { min: 0.10, max: 0.199, color: '#e67e22', behavior: 'Boisterousness, possible nausea', impairment: 'Poor coordination, slurred speech, slowed reflexes' },
+      { min: 0.20, max: 0.299, color: '#e74c3c', behavior: 'Nausea, emotional swings', impairment: 'Severe motor impairment, memory blackout' },
+      { min: 0.30, max: 0.399, color: '#c0392b', behavior: 'Stupor, CNS depression', impairment: 'Possible loss of consciousness' },
+      { min: 0.40, max: 0.500, color: '#8e44ad', behavior: 'Coma potential', impairment: 'Critical slowing of heart and breathing' },
+      { min: 0.50, max: Infinity, color: '#7f8c8d', behavior: 'High possibility of death', impairment: 'Life-threatening' }
+    ];
+
+    function calcBACContribution(oz, W, r, H) {
+      return Math.max((oz * 5.14 / (W * r)) - 0.015 * H, 0);
+    }
+    function findBACInfo(bac) {
+      return bacInfo.find(e => bac >= e.min && bac <= e.max) || bacInfo[0];
+    }
+    
+    // NEW: Modified createDrinkEntry to accept data to pre-fill the fields
+    function createDrinkEntry(data = {}) {
+      const card = document.createElement('div');
+      card.className = 'drink-card';
+      // Use provided data or defaults
+      card.innerHTML = `
+        <div class="fields-row">
+          <div><label>Volume (mL)</label><input type="number" class="drinkVolume" placeholder="150" value="${data.volume || ''}"></div>
+          <div><label>ABV (%)</label><input type="number" class="drinkAbv" placeholder="5.0" step="0.1" value="${data.abv || ''}"></div>
+          <div><label>Count</label><input type="number" class="drinkCount" placeholder="1" min="1" step="1" value="${data.count || 1}"></div>
+          <div><label>Input Type</label><select class="timeType"><option value="duration" ${data.timeType === 'duration' ? 'selected' : ''}>Since (H:M)</option><option value="daytime" ${data.timeType === 'daytime' ? 'selected' : ''}>Day & Time</option></select></div>
+        </div>
+        <div class="duration-fields fields-row">
+          <div><label>Hours</label><input type="number" class="drinkHoursH" placeholder="1" value="${data.hoursH || ''}"></div>
+          <div><label>Minutes</label><input type="number" class="drinkHoursM" placeholder="30" max="59" value="${data.hoursM || ''}"></div>
+        </div>
+        <div class="daytime-fields fields-row">
+          <div><label>Day of Month</label><input type="number" class="drinkDay" placeholder="16" min="1" max="31" value="${data.day || ''}"></div>
+          <div><label>Hour</label><input type="number" class="drinkHour" placeholder="20" min="0" max="23" value="${data.hour || ''}"></div>
+          <div><label>Minute</label><input type="number" class="drinkMinute" placeholder="45" min="0" max="59" value="${data.minute || ''}"></div>
+        </div>
+      `;
+      const removeBtn = document.createElement('button'); removeBtn.className = 'removeBtn'; removeBtn.textContent = '×'; removeBtn.onclick = () => card.remove(); card.appendChild(removeBtn);
+      const timeType = card.querySelector('.timeType'), durF = card.querySelector('.duration-fields'), dayF = card.querySelector('.daytime-fields');
+      timeType.onchange = () => { durF.style.display = timeType.value==='duration'?'grid':'none'; dayF.style.display = timeType.value==='daytime'?'grid':'none'; };
+      timeType.dispatchEvent(new Event('change'));
+      return card;
+    }
+    
+    // NEW: Function to save all form data to localStorage
+    function saveData() {
+        const drinksData = [];
+        document.querySelectorAll('.drink-card').forEach(card => {
+            drinksData.push({
+                volume: card.querySelector('.drinkVolume').value,
+                abv: card.querySelector('.drinkAbv').value,
+                count: card.querySelector('.drinkCount').value,
+                timeType: card.querySelector('.timeType').value,
+                hoursH: card.querySelector('.drinkHoursH').value,
+                hoursM: card.querySelector('.drinkHoursM').value,
+                day: card.querySelector('.drinkDay').value,
+                hour: card.querySelector('.drinkHour').value,
+                minute: card.querySelector('.drinkMinute').value,
+            });
+        });
+
+        const dataToSave = {
+            weight: document.getElementById('weight').value,
+            gender: document.getElementById('gender').value,
+            drinks: drinksData
+        };
+
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(dataToSave));
+    }
+
+    // NEW: Function to load data from localStorage when the page loads
+    function loadData() {
+        const savedData = localStorage.getItem(STORAGE_KEY);
+        if (!savedData) {
+            // If no saved data, start with one fresh drink card
+            document.getElementById('drinksList').appendChild(createDrinkEntry());
+            return;
+        }
+
+        const data = JSON.parse(savedData);
+        
+        document.getElementById('weight').value = data.weight || '';
+        document.getElementById('gender').value = data.gender || 'male';
+
+        const drinksList = document.getElementById('drinksList');
+        drinksList.innerHTML = ''; // Clear any default content
+
+        if (data.drinks && data.drinks.length > 0) {
+            data.drinks.forEach(drinkData => {
+                drinksList.appendChild(createDrinkEntry(drinkData));
+            });
+        } else {
+            // If there's saved data but no drinks, add a fresh one
+            drinksList.appendChild(createDrinkEntry());
+        }
+    }
+
+    document.getElementById('addDrinkBtn').onclick = e => { e.preventDefault(); document.getElementById('drinksList').appendChild(createDrinkEntry()); };
+
+    // NEW: Add event listener for the clear button
+    document.getElementById('clearBtn').onclick = e => {
+        e.preventDefault();
+        if (confirm('Are you sure you want to clear all drinks and start a new session?')) {
+            localStorage.removeItem(STORAGE_KEY); // Clear saved data
+            const drinksList = document.getElementById('drinksList');
+            drinksList.innerHTML = ''; // Clear from page
+            drinksList.appendChild(createDrinkEntry()); // Add one fresh card
+            // Reset results text
+            document.getElementById('result').textContent = '';
+            document.getElementById('behavior').textContent = '';
+            document.getElementById('impairment').textContent = '';
+            // Reset chart
+            barChart.data.datasets[0].data[0] = 0;
+            barChart.update();
+        }
+    };
+
+    const ctx = document.getElementById('bacChart').getContext('2d');
+    const barChart = new Chart(ctx, {
+      type: 'bar',
+      data: { labels: ['Your BAC'], datasets: [{ label: 'BAC (g/dL)', data: [0], backgroundColor: '#007BFF' }] },
+      options: {
+        indexAxis: 'y',
+        scales: { x: { beginAtZero: true, max: 0.5, title: { display: true, text: 'BAC (g/dL)' } } },
+        plugins: { legend: { display: false } }
+      }
+    });
+
+    document.getElementById('calcBtn').onclick = () => {
+      const W = parseFloat(document.getElementById('weight').value) || 0;
+      const gender = document.getElementById('gender').value;
+      const r = gender==='male'?0.73:0.66;
+      if (!W) return alert('Please enter a valid weight.');
+
+      let totalBAC = 0;
+      const now = new Date(), currentYear = now.getFullYear(), currentMonth = now.getMonth();
+
+      document.querySelectorAll('.drink-card').forEach(card => {
+        const ml = parseFloat(card.querySelector('.drinkVolume').value)||0;
+        const abv = parseFloat(card.querySelector('.drinkAbv').value)||0;
+        const oz = (ml*abv/100)/29.5735;
+        const count = parseInt(card.querySelector('.drinkCount').value)||1;
+        let H = 0;
+        if (card.querySelector('.timeType').value==='daytime') {
+          const day = parseInt(card.querySelector('.drinkDay').value)||now.getDate();
+          const hr = parseInt(card.querySelector('.drinkHour').value)||0;
+          const min= parseInt(card.querySelector('.drinkMinute').value)||0;
+          const drinkTime = new Date(currentYear,currentMonth,day,hr,min);
+          H = (now-drinkTime)/(1000*60*60);
+        } else {
+          const h = parseFloat(card.querySelector('.drinkHoursH').value)||0;
+          const m = parseFloat(card.querySelector('.drinkHoursM').value)||0;
+          H = h + m/60;
+        }
+        totalBAC += count * calcBACContribution(oz, W, r, H);
+      });
+
+      const bac = totalBAC;
+      const info = findBACInfo(bac);
+      document.getElementById('result').textContent = `Estimated BAC: ${bac.toFixed(3)}`;
+      document.getElementById('behavior').textContent = `Behavior: ${info.behavior}`;
+      document.getElementById('impairment').textContent = `Impairment: ${info.impairment}`;
+
+      barChart.data.datasets[0].data[0] = bac;
+      barChart.data.datasets[0].backgroundColor = info.color;
+      barChart.update();
+
+      // NEW: Save data after every successful calculation
+      saveData();
+    };
+
+    // NEW: Load any saved data when the script runs
+    loadData();
+  </script>
+</body>
+</html>
